@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-gi gir1.2-gtk-3.0 gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-gtk3 \
+            gstreamer1.0-tools libglib2.0-bin pyflakes3 xvfb xauth \
+            debhelper dh-python devscripts lintian
+
+      - name: Lint
+        run: make lint
+
+      - name: Unit tests (with a virtual display for the playback tests)
+        run: xvfb-run -a make test
+
+      - name: Build Debian package
+        run: |
+          dpkg-buildpackage -us -uc -b
+          mkdir -p dist && mv ../*.deb dist/
+
+      - name: Lintian
+        run: lintian --info --display-info --fail-on error dist/*.deb
+
+      - name: Install and smoke-test the package
+        run: |
+          sudo apt-get install -y ./dist/*.deb
+          sh debian/tests/smoke
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb

@@ -1,0 +1,8 @@
+#!/bin/sh
+# The hook must load in every Python process without side effects, and the
+# settings schema must be installed.
+set -e
+python3 -c 'import sys; import cinnamon_screensaver_video.hook as h; assert any(isinstance(f, h._Finder) for f in sys.meta_path); assert "gi" not in sys.modules'
+python3 -c 'import cinnamon_screensaver_video.player'
+gsettings list-keys org.cinnamon.screensaver-video | grep -qx video-uri
+echo OK

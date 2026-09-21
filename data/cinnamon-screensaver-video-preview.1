@@ -1,0 +1,43 @@
+.TH CINNAMON-SCREENSAVER-VIDEO-PREVIEW 1 "2026" "cinnamon-screensaver-video 0.9.0" "User Commands"
+.SH NAME
+cinnamon-screensaver-video-preview \- preview the Cinnamon screensaver video background
+.SH SYNOPSIS
+.B cinnamon-screensaver-video-preview
+.RI [ FILE ]
+.SH DESCRIPTION
+Plays the video configured for the Cinnamon screensaver and lock screen full
+screen on the primary monitor, using the same scaling, darkening and sound
+settings as the lock screen. If
+.I FILE
+is given, that local video file is played instead of the configured one.
+.PP
+Press
+.B Esc
+or
+.BR q ,
+or click, to close the preview.
+.PP
+The video itself is configured in System Settings, on the
+.B Video
+tab of the Screensaver page, or with
+.BR gsettings (1)
+under the schema
+.BR org.cinnamon.screensaver-video .
+.SH EXIT STATUS
+.TP
+.B 0
+The preview was closed normally.
+.TP
+.B 1
+No usable video was configured or given, or no display is available.
+.TP
+.B 2
+The video could not be played.
+.SH FILES
+.TP
+.I ~/.cache/cinnamon-screensaver-video/log
+Messages about why a video was or wasn't played, and playback errors.
+.SH SEE ALSO
+.BR cinnamon-screensaver (1),
+.BR cinnamon-screensaver-command (1),
+.BR gsettings (1)

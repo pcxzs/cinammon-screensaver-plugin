@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+/build/
+/dist/
+
+# debhelper build artefacts
+/debian/cinnamon-screensaver-video/
+/debian/.debhelper/
+/debian/files
+/debian/*.substvars
+/debian/*.debhelper.log
+/debian/debhelper-build-stamp

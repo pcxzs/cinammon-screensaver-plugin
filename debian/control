@@ -1,0 +1,52 @@
+Source: cinnamon-screensaver-video
+Section: x11
+Priority: optional
+Maintainer: Your Name <your-email@example.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-python,
+ python3:any,
+ gir1.2-gst-plugins-base-1.0 <!nocheck>,
+ gir1.2-gstreamer-1.0 <!nocheck>,
+ gir1.2-gtk-3.0 <!nocheck>,
+ gstreamer1.0-plugins-base <!nocheck>,
+ gstreamer1.0-plugins-good <!nocheck>,
+ libglib2.0-bin <!nocheck>,
+ python3-gi <!nocheck>,
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/OWNER/cinnamon-screensaver-video
+Vcs-Browser: https://github.com/OWNER/cinnamon-screensaver-video
+Vcs-Git: https://github.com/OWNER/cinnamon-screensaver-video.git
+
+Package: cinnamon-screensaver-video
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+ cinnamon-screensaver,
+ gir1.2-gst-plugins-base-1.0,
+ gir1.2-gstreamer-1.0,
+ gir1.2-gtk-3.0,
+ gstreamer1.0-gtk3,
+ gstreamer1.0-plugins-base,
+ gstreamer1.0-plugins-good,
+ libx11-6,
+ libxext6,
+ python3-gi,
+Recommends:
+ gstreamer1.0-libav,
+Suggests:
+ gdb,
+Enhances:
+ cinnamon,
+ cinnamon-screensaver,
+Description: video background for the Cinnamon screensaver and lock screen
+ Plays a looping video file (MP4, WebM, MKV, ...) behind Cinnamon's own
+ screensaver and lock screen, in place of the wallpaper. The unlock dialog,
+ clock, authentication, timers and multi-monitor handling remain those of
+ cinnamon-screensaver.
+ .
+ Settings appear as a "Video" tab on the Screensaver page of Cinnamon's
+ System Settings. If the video can't be played, the normal wallpaper is
+ shown.

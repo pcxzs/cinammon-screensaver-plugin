@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="cinnamon-screensaver-video">
+  <schema id="org.cinnamon.screensaver-video" path="/org/cinnamon/screensaver-video/">
+    <key name="enabled" type="b">
+      <default>true</default>
+      <summary>Show a video on the screensaver and lock screen</summary>
+    </key>
+    <key name="video-uri" type="s">
+      <default>''</default>
+      <summary>Video file</summary>
+      <description>URI (or absolute path) of the video to play. Empty means use the wallpaper.</description>
+    </key>
+    <key name="scaling" type="s">
+      <choices>
+        <choice value="fill"/>
+        <choice value="fit"/>
+        <choice value="stretch"/>
+      </choices>
+      <default>'fill'</default>
+      <summary>How the video is fitted to the monitor</summary>
+    </key>
+    <key name="dim" type="d">
+      <range min="0.0" max="1.0"/>
+      <default>0.3</default>
+      <summary>How much to darken the video (0 = not at all, 1 = black)</summary>
+    </key>
+    <key name="mute" type="b">
+      <default>true</default>
+      <summary>Mute the video</summary>
+    </key>
+    <key name="volume" type="d">
+      <range min="0.0" max="1.0"/>
+      <default>0.5</default>
+      <summary>Playback volume when not muted</summary>
+    </key>
+    <key name="pause-on-battery" type="b">
+      <default>false</default>
+      <summary>Show a still frame instead of playing while on battery</summary>
+    </key>
+    <key name="pause-when-screen-off" type="b">
+      <default>true</default>
+      <summary>Pause decoding while the monitors are powered down</summary>
+    </key>
+    <key name="hardware-acceleration" type="b">
+      <default>false</default>
+      <summary>Render through OpenGL (gtkglsink)</summary>
+    </key>
+  </schema>
+</schemalist>

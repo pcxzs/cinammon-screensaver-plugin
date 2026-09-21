@@ -1,0 +1,80 @@
+#!/usr/bin/python3
+"""
+Plays the configured screensaver video full screen, the same way the lock
+screen does. Optional argument: a local video file to use instead of the
+configured one. Esc, q or a mouse click closes the preview.
+"""
+
+import os
+import signal
+import sys
+
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk
+
+from cinnamon_screensaver_video import player, config
+
+
+def main():
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    Gtk.init(sys.argv)
+
+    display = Gdk.Display.get_default()
+    if display is None:
+        print("No display available.", file=sys.stderr)
+        return 1
+    monitor = display.get_primary_monitor() or display.get_monitor(0)
+    geo = monitor.get_geometry()
+    scale = monitor.get_scale_factor()
+    w, h = geo.width * scale, geo.height * scale
+
+    if len(sys.argv) > 1:
+        uri = player.to_uri(os.path.abspath(sys.argv[1]))
+        if uri is None or not player.is_playable_file(uri):
+            print("Not a readable local file: %s" % sys.argv[1], file=sys.stderr)
+            return 1
+        settings = config.get_settings()
+        kwargs = {}
+        if settings is not None:
+            kwargs = dict(scaling=settings.get_string("scaling"),
+                          dim=settings.get_double("dim"),
+                          audio=not settings.get_boolean("mute"),
+                          volume=settings.get_double("volume"),
+                          use_gl=settings.get_boolean("hardware-acceleration"))
+        video = player.VideoWidget(uri, w, h, **kwargs)
+    else:
+        video = player.create_from_settings(w, h)
+        if video is None:
+            print("No usable video configured. Set one in System Settings > "
+                  "Screensaver > Video, or pass a file.", file=sys.stderr)
+            return 1
+
+    window = Gtk.Window(title="Screensaver video preview")
+    window.add(video)
+    window.connect("destroy", Gtk.main_quit)
+
+    def on_key(w, event):
+        if event.keyval in (Gdk.KEY_Escape, Gdk.KEY_q):
+            window.destroy()
+    window.connect("key-press-event", on_key)
+    window.connect("button-press-event", lambda *a: window.destroy())
+
+    exit_code = [0]
+
+    def on_error(v):
+        print("Playback failed.", file=sys.stderr)
+        exit_code[0] = 2
+        window.destroy()
+    video.set_error_callback(on_error)
+
+    window.show_all()
+    monitors = [display.get_monitor(i) for i in range(display.get_n_monitors())]
+    window.fullscreen_on_monitor(Gdk.Screen.get_default(), monitors.index(monitor))
+    Gtk.main()
+    return exit_code[0]
+
+
+if __name__ == "__main__":
+    sys.exit(main())
