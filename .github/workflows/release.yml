@@ -11,7 +11,7 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check that the tag matches debian/changelog
         run: |
@@ -21,7 +21,7 @@ jobs:
       - name: Build
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends debhelper dh-python
+          sudo apt-get install -y --no-install-recommends build-essential debhelper dh-python
           DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
           mkdir -p dist && mv ../*.deb dist/
           cd dist && sha256sum *.deb > SHA256SUMS
