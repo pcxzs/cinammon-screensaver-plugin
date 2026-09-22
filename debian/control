@@ -1,7 +1,7 @@
 Source: cinnamon-screensaver-video
 Section: x11
 Priority: optional
-Maintainer: Your Name <your-email@example.com>
+Maintainer: pcxzs <322609631+pcxzs@users.noreply.github.com>
 Build-Depends:
  debhelper-compat (= 13),
  dh-python,
@@ -15,9 +15,9 @@ Build-Depends:
  python3-gi <!nocheck>,
 Standards-Version: 4.7.0
 Rules-Requires-Root: no
-Homepage: https://github.com/OWNER/cinnamon-screensaver-video
-Vcs-Browser: https://github.com/OWNER/cinnamon-screensaver-video
-Vcs-Git: https://github.com/OWNER/cinnamon-screensaver-video.git
+Homepage: https://github.com/pcxzs/cinammon-screensaver-plugin
+Vcs-Browser: https://github.com/pcxzs/cinammon-screensaver-plugin
+Vcs-Git: https://github.com/pcxzs/cinammon-screensaver-plugin.git
 
 Package: cinnamon-screensaver-video
 Architecture: all

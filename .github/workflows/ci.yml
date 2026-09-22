@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install dependencies
         run: |
@@ -42,7 +42,7 @@ jobs:
           sudo apt-get install -y ./dist/*.deb
           sh debian/tests/smoke
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         with:
           name: deb
           path: dist/*.deb

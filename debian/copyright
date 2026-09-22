@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: cinnamon-screensaver-video
-Upstream-Contact: https://github.com/OWNER/cinnamon-screensaver-video/issues
-Source: https://github.com/OWNER/cinnamon-screensaver-video
+Upstream-Contact: https://github.com/pcxzs/cinammon-screensaver-plugin/issues
+Source: https://github.com/pcxzs/cinammon-screensaver-plugin
 
 Files: *
 Copyright: 2026 cinnamon-screensaver-video contributors
