@@ -22,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential debhelper dh-python
-          DEB_BUILD_OPTIONS=nocheck dpkg-buildpackage -us -uc -b
+          DEB_BUILD_OPTIONS=nocheck DEB_BUILD_PROFILES=nocheck dpkg-buildpackage -us -uc -b
           mkdir -p dist && mv ../*.deb dist/
           cd dist && sha256sum *.deb > SHA256SUMS
 
