@@ -37,7 +37,8 @@ cinnamon-screensaver-command -a     # activate; move the mouse to end it
 Guidelines:
 
 - `hook.py` runs in every Python process: keep it to `os`/`sys`, no I/O at import.
-- Never block the screensaver's main thread; it holds the input grabs.
+- Never block the screensaver's main thread; it holds the input grabs. Don't call
+  `set_state()`/`seek()` on a pipeline from it - go through `LoopingPlayer`.
 - Fail safe: on any unexpected condition, fall back to the stock behaviour.
 - Match the surrounding style; add a test for behaviour changes.
 - Add an entry to `CHANGELOG.md` and `debian/changelog` (`dch -i`) for user-visible changes.

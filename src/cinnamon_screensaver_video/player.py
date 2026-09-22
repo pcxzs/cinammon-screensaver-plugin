@@ -10,12 +10,18 @@ Hardening, since this runs inside the lock screen:
   * GStreamer elements that can reach the network on their own (adaptive
     streaming demuxers that follow URLs in playlists, SDP/RTSP, HTTP and
     other network sources) are disabled for autoplugging in this process;
-  * no call that may block on a GStreamer streaming thread (state change to
-    NULL, flushing seek) is made from the Gtk main thread.
+  * the Gtk main thread never calls into the pipeline to change its state or
+    seek. All of that happens on one worker thread per pipeline, so even a
+    deadlock inside GStreamer can only freeze the video, never the lock
+    screen (which holds the keyboard and pointer grabs);
+  * looping uses segment seeks on the same pipeline, not playbin's gapless
+    "about-to-finish" re-queueing: switching to a new decoding group while a
+    state change was in progress deadlocked playbin (seen with audio enabled).
 """
 
 import ctypes
 import ctypes.util
+import queue
 import threading
 
 import gi
@@ -164,23 +170,113 @@ class _Battery:
             self.proxy = None
 
 
-def _stop_pipeline_async(pipeline):
+class _PipelineWorker(threading.Thread):
     """
-    Shut a pipeline down without blocking the Gtk main thread.
-
-    set_state(NULL) waits for the streaming threads to finish, and a streaming
-    thread may itself be waiting for the main loop (gtksink hands work to it).
-    Doing that wait on the main thread can deadlock the screensaver while it
-    holds the keyboard/pointer grabs, so it's done on a worker thread instead.
+    Serialises every blocking pipeline operation (state changes, seeks) on
+    one thread, so the caller - the Gtk main thread - never waits for
+    GStreamer. If GStreamer deadlocks internally, only this thread hangs.
     """
-    def stop():
-        start = GLib.get_monotonic_time()
-        pipeline.set_state(Gst.State.NULL)
-        took = (GLib.get_monotonic_time() - start) / 1e6
-        if took > 2:
-            log("pipeline shutdown took %.1fs" % took)
 
-    threading.Thread(target=stop, name="csv-stop", daemon=True).start()
+    _STOP = object()
+
+    def __init__(self, pipeline):
+        super(_PipelineWorker, self).__init__(name="csv-pipeline", daemon=True)
+        self.pipeline = pipeline
+        self.jobs = queue.Queue()
+
+    def set_state(self, state):
+        self.jobs.put(("state", state))
+
+    def seek(self, flags):
+        self.jobs.put(("seek", flags))
+
+    def stop(self):
+        """Set the pipeline to NULL and end the thread (without waiting)."""
+        self.jobs.put((self._STOP, None))
+
+    def run(self):
+        while True:
+            kind, arg = self.jobs.get()
+            if kind is self._STOP:
+                start = GLib.get_monotonic_time()
+                self.pipeline.set_state(Gst.State.NULL)
+                took = (GLib.get_monotonic_time() - start) / 1e6
+                if took > 2:
+                    log("pipeline shutdown took %.1fs" % took)
+                self.pipeline = None
+                return
+            if kind == "state":
+                self.pipeline.set_state(arg)
+            elif kind == "seek":
+                self.pipeline.seek(1.0, Gst.Format.TIME, arg,
+                                   Gst.SeekType.SET, 0, Gst.SeekType.NONE, -1)
+
+
+class LoopingPlayer:
+    """
+    Plays a playbin in an endless loop without ever blocking the thread that
+    drives it (normally the Gtk main thread).
+
+    Looping: once prerolled, a flushing *segment* seek to the start is
+    issued; every SEGMENT_DONE is answered with a non-flushing segment seek to
+    the start again, which loops seamlessly on the same decoders. EOS (for
+    demuxers without segment support) falls back to a flushing seek.
+
+    Bus messages are handled on the default GLib main context.
+    """
+
+    def __init__(self, pipeline, on_error=None):
+        self.pipeline = pipeline
+        self.on_error = on_error
+        self.failed = False
+        self.loops = 0
+        self._target = None
+        self._looping = False
+        self._worker = _PipelineWorker(pipeline)
+        self._worker.start()
+        bus = pipeline.get_bus()
+        bus.add_signal_watch()
+        self._bus_handler = bus.connect("message", self._on_bus_message)
+
+    def set_playing(self, playing):
+        """Request PLAYING or PAUSED; only forwarded when the target changes."""
+        if self.pipeline is None or self.failed:
+            return
+        target = Gst.State.PLAYING if playing else Gst.State.PAUSED
+        if target != self._target:
+            self._target = target
+            self._worker.set_state(target)
+
+    def shutdown(self):
+        if self.pipeline is None:
+            return
+        bus = self.pipeline.get_bus()
+        bus.disconnect(self._bus_handler)
+        bus.remove_signal_watch()
+        self._worker.stop()
+        self.pipeline = None
+
+    def _on_bus_message(self, bus, message):
+        if self.pipeline is None or message.src is None:
+            return
+        t = message.type
+        if t == Gst.MessageType.ASYNC_DONE and not self._looping:
+            # First preroll: switch to segment playback for seamless looping.
+            self._looping = True
+            self._worker.seek(Gst.SeekFlags.FLUSH | Gst.SeekFlags.SEGMENT)
+        elif t == Gst.MessageType.SEGMENT_DONE:
+            self.loops += 1
+            self._worker.seek(Gst.SeekFlags.SEGMENT)
+        elif t == Gst.MessageType.EOS:
+            self.loops += 1
+            self._worker.seek(Gst.SeekFlags.FLUSH | Gst.SeekFlags.SEGMENT)
+        elif t == Gst.MessageType.ERROR:
+            err, dbg = message.parse_error()
+            log("playback error: %s (%s)" % (err.message, dbg))
+            self.failed = True
+            self.shutdown()
+            if self.on_error is not None:
+                self.on_error()
 
 
 def make_filter(scaling, width, height):
@@ -204,6 +300,22 @@ def make_filter(scaling, width, height):
     return Gst.parse_bin_from_description(desc, True)
 
 
+def make_playbin(uri, audio=False, volume=0.5):
+    """A playbin for a local file: video only unless audio is requested, no subtitles."""
+    if to_uri(uri) != uri:
+        raise ValueError("only local file:// URIs can be played")
+    pipeline = Gst.ElementFactory.make("playbin", None)
+    if pipeline is None:
+        raise RuntimeError("GStreamer 'playbin' element is missing")
+    flags = FLAG_VIDEO
+    if audio:
+        flags |= FLAG_AUDIO | FLAG_SOFT_VOLUME
+        pipeline.set_property("volume", max(0.0, min(1.0, volume)))
+    pipeline.set_property("flags", flags)
+    pipeline.set_property("uri", uri)
+    return pipeline
+
+
 class VideoWidget(Gtk.Bin):
     """
     A Gtk.Bin holding the video sink's widget. Call set_error_callback() to
@@ -217,39 +329,19 @@ class VideoWidget(Gtk.Bin):
         super(VideoWidget, self).__init__()
         init()
 
-        if to_uri(uri) != uri:
-            raise ValueError("only local file:// URIs can be played")
-
         self.uri = uri
         self.dim = max(0.0, min(1.0, dim))
         self.error_callback = None
-        self.failed = False
         self.battery = None
         self.dpms = None
         self.dpms_source = 0
         self.manually_paused = False
 
-        self.pipeline = Gst.ElementFactory.make("playbin", None)
-        if self.pipeline is None:
-            raise RuntimeError("GStreamer 'playbin' element is missing")
-
+        pipeline = make_playbin(uri, audio, volume)
         sink, widget = self._make_sink(use_gl)
-        self.pipeline.set_property("video-sink", sink)
-        self.pipeline.set_property("video-filter", make_filter(scaling, width, height))
-
-        flags = FLAG_VIDEO
-        if audio:
-            flags |= FLAG_AUDIO | FLAG_SOFT_VOLUME
-            self.pipeline.set_property("volume", max(0.0, min(1.0, volume)))
-        self.pipeline.set_property("flags", flags)
-        self.pipeline.set_property("uri", uri)
-
-        # Gapless looping: queue the same file again right before the end.
-        self.pipeline.connect("about-to-finish", self._on_about_to_finish)
-
-        bus = self.pipeline.get_bus()
-        bus.add_signal_watch()
-        self.bus_handler = bus.connect("message", self._on_bus_message)
+        pipeline.set_property("video-sink", sink)
+        pipeline.set_property("video-filter", make_filter(scaling, width, height))
+        self.player = LoopingPlayer(pipeline, on_error=self._on_error)
 
         widget.set_hexpand(True)
         widget.set_vexpand(True)
@@ -265,6 +357,14 @@ class VideoWidget(Gtk.Bin):
             self.battery = _Battery(self._update_state)
         if pause_when_screen_off:
             self.dpms = _Dpms()
+
+    @property
+    def pipeline(self):
+        return self.player.pipeline
+
+    @property
+    def failed(self):
+        return self.player.failed
 
     def _make_sink(self, use_gl):
         if use_gl:
@@ -293,7 +393,7 @@ class VideoWidget(Gtk.Bin):
         self._update_state()
 
     def _should_play(self):
-        if self.failed or self.manually_paused or not self.get_mapped():
+        if self.manually_paused or not self.get_mapped():
             return False
         if self.battery is not None and self.battery.on_battery():
             return False
@@ -302,11 +402,9 @@ class VideoWidget(Gtk.Bin):
         return True
 
     def _update_state(self, *args):
-        if self.pipeline is None:
-            return
-        # PLAYING <-> PAUSED is asynchronous and doesn't wait on streaming threads.
-        target = Gst.State.PLAYING if self._should_play() else Gst.State.PAUSED
-        self.pipeline.set_state(target)
+        # Never blocks: LoopingPlayer hands the change to its worker thread,
+        # and only when the target state actually changes.
+        self.player.set_playing(self._should_play())
 
     def _poll_dpms(self):
         self._update_state()
@@ -330,12 +428,7 @@ class VideoWidget(Gtk.Bin):
         if self.dpms_source:
             GLib.source_remove(self.dpms_source)
             self.dpms_source = 0
-        if self.pipeline is not None:
-            bus = self.pipeline.get_bus()
-            bus.disconnect(self.bus_handler)
-            bus.remove_signal_watch()
-            _stop_pipeline_async(self.pipeline)
-            self.pipeline = None
+        self.player.shutdown()
         if self.battery is not None:
             self.battery.close()
             self.battery = None
@@ -345,27 +438,9 @@ class VideoWidget(Gtk.Bin):
 
     # -- callbacks -----------------------------------------------------------
 
-    def _on_about_to_finish(self, playbin):
-        # Runs on a streaming thread; setting the uri here is allowed.
-        playbin.set_property("uri", self.uri)
-
-    def _on_bus_message(self, bus, message):
-        t = message.type
-        if t == Gst.MessageType.EOS:
-            # Fallback loop in case gapless re-queueing didn't happen. A
-            # flushing seek waits for the streaming thread, so keep it off the
-            # main thread for the same reason as _stop_pipeline_async().
-            pipeline = self.pipeline
-            threading.Thread(target=pipeline.seek_simple,
-                             args=(Gst.Format.TIME, Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT, 0),
-                             name="csv-loop", daemon=True).start()
-        elif t == Gst.MessageType.ERROR:
-            err, dbg = message.parse_error()
-            log("playback error: %s (%s)" % (err.message, dbg))
-            self.failed = True
-            self.shutdown()
-            if self.error_callback is not None:
-                GLib.idle_add(self.error_callback, self)
+    def _on_error(self):
+        if self.error_callback is not None:
+            GLib.idle_add(self.error_callback, self)
 
     def _on_draw(self, widget, cr):
         if self.dim > 0.0:

@@ -14,3 +14,8 @@
 - Hardening: local regular files only, network-capable GStreamer elements
   disabled, symlink-safe logging, hook only activates for root-owned modules.
 - `cinnamon-screensaver-video-preview` tool.
+- Fixed a lock-screen freeze: playbin's gapless re-queueing deadlocked
+  against a concurrent play/pause change (with audio enabled), typically when
+  the monitors woke up. Looping now uses segment seeks, and all pipeline state
+  changes and seeks run on a per-pipeline worker thread, never on the
+  screensaver's main thread.

@@ -155,6 +155,117 @@ def make_clip(path):
                    check=True, timeout=60)
 
 
+def make_av_clip(path):
+    # A very short clip *with audio*: playbin's gapless group switch plus a
+    # concurrent state change deadlocked with audio+video, not video alone.
+    subprocess.run(["gst-launch-1.0", "-q", "-e",
+                    "videotestsrc", "num-buffers=10", "!",
+                    "video/x-raw,width=320,height=180,framerate=30/1", "!",
+                    "vp8enc", "deadline=1", "!", "queue", "!", "webmmux", "name=m", "!",
+                    "filesink", "location=" + path,
+                    "audiotestsrc", "num-buffers=15", "volume=0", "!", "vorbisenc", "!",
+                    "queue", "!", "m."],
+                   check=True, timeout=60)
+
+
+class _BlockingPipeline:
+    """Stands in for a pipeline whose set_state() never returns."""
+
+    def __init__(self):
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.threads = []
+
+    def set_state(self, state):
+        self.threads.append(threading.current_thread().name)
+        self.entered.set()
+        self.release.wait(10)
+
+
+@unittest.skipUnless(HAVE_GST, "PyGObject/GStreamer not available")
+class WorkerTests(unittest.TestCase):
+
+    def test_hung_gstreamer_call_does_not_block_caller(self):
+        fake = _BlockingPipeline()
+        worker = player._PipelineWorker(fake)
+        worker.start()
+        start = time.monotonic()
+        worker.set_state(Gst.State.PLAYING)
+        worker.set_state(Gst.State.PAUSED)
+        worker.stop()
+        self.assertLess(time.monotonic() - start, 0.1)
+        self.assertTrue(fake.entered.wait(2))
+        self.assertEqual(fake.threads, ["csv-pipeline"])
+        fake.release.set()
+        worker.join(5)
+
+
+@unittest.skipUnless(HAVE_GST and shutil.which("gst-launch-1.0") and
+                     has_elements("vp8enc", "vp8dec", "vorbisenc", "vorbisdec", "webmmux",
+                                  "matroskademux", "playbin", "fakesink"),
+                     "gst-launch-1.0 or VP8/Vorbis/WebM elements missing")
+class LoopingPlayerTests(unittest.TestCase):
+    """Regression test: the lock screen froze when playback state changed
+    while playbin switched to the next loop iteration (audio enabled)."""
+
+    def setUp(self):
+        player.init()
+        self.tmp = tempfile.mkdtemp()
+        self.clip = os.path.join(self.tmp, "av.webm")
+        make_av_clip(self.clip)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_rapid_state_changes_never_block_and_keep_looping(self):
+        pipeline = player.make_playbin(player.to_uri(self.clip), audio=True)
+        for prop in ("video-sink", "audio-sink"):
+            sink = Gst.ElementFactory.make("fakesink", None)
+            sink.set_property("sync", True)
+            pipeline.set_property(prop, sink)
+        lp = player.LoopingPlayer(pipeline)
+
+        worst_gap = [0.0]
+        last = [time.monotonic()]
+        playing = [True]
+
+        def toggle():
+            now = time.monotonic()
+            worst_gap[0] = max(worst_gap[0], now - last[0])
+            last[0] = now
+            lp._target = None            # force a real state change every tick
+            lp.set_playing(playing[0])
+            playing[0] = not playing[0] if now % 1 < 0.5 else True
+            return True
+
+        loop = GLib.MainLoop()
+        lp.set_playing(True)
+        GLib.timeout_add(7, toggle)
+        GLib.timeout_add(8000, loop.quit)
+        loop.run()
+        lp.shutdown()
+
+        self.assertLess(worst_gap[0], 1.0, "main loop was blocked")
+        self.assertGreaterEqual(lp.loops, 3, "video stopped looping")
+
+    def test_loops_without_group_switches(self):
+        pipeline = player.make_playbin(player.to_uri(self.clip), audio=True)
+        for prop in ("video-sink", "audio-sink"):
+            sink = Gst.ElementFactory.make("fakesink", None)
+            sink.set_property("sync", True)
+            pipeline.set_property(prop, sink)
+        switches = []
+        pipeline.connect("about-to-finish", lambda p: switches.append(1))
+        lp = player.LoopingPlayer(pipeline)
+        loop = GLib.MainLoop()
+        lp.set_playing(True)
+        GLib.timeout_add(3000, loop.quit)
+        loop.run()
+        lp.shutdown()
+        self.assertGreaterEqual(lp.loops, 3)
+        self.assertEqual(switches, [], "playbin must not switch decoding groups to loop")
+
+
 @unittest.skipUnless(HAVE_GST and os.environ.get("DISPLAY") and shutil.which("gst-launch-1.0"),
                      "needs a display (run under xvfb-run) and gst-launch-1.0")
 class WidgetTests(unittest.TestCase):
@@ -221,9 +332,9 @@ class WidgetTests(unittest.TestCase):
         win.destroy()
         self.assertLess(time.monotonic() - start, 0.5)
         deadline = time.monotonic() + 5
-        while any(t.name == "csv-stop" for t in threading.enumerate()) and time.monotonic() < deadline:
+        while any(t.name == "csv-pipeline" for t in threading.enumerate()) and time.monotonic() < deadline:
             time.sleep(0.05)
-        self.assertFalse(any(t.name == "csv-stop" for t in threading.enumerate()))
+        self.assertFalse(any(t.name == "csv-pipeline" for t in threading.enumerate()))
 
 
 if __name__ == "__main__":
